@@ -1,0 +1,57 @@
+// The app's own screens for the README, drawn by Robolectric (no device, no emulator).
+// Run by ../capture.sh, which makes build/res.apk and build/test-config first.
+plugins { id 'java' }
+
+// repo1 directly: the repo.maven.apache.org alias rate-limits big downloads
+repositories { maven { url 'https://repo1.maven.org/maven2/' } }
+
+def androidAll = '16-robolectric-13921718'
+configurations { roboJars }
+
+sourceSets {
+    test {
+        java { srcDirs = ['src/test/java', '../../../android/app/src/main/java', 'build/gen'] }
+        resources { srcDirs = ['build/test-config'] }
+    }
+}
+
+dependencies {
+    // androidx.test lives only on Google's Maven: src/test/java/androidx/test has the few
+    // classes Robolectric calls, so the build needs only Maven Central.
+    testImplementation('org.robolectric:robolectric:4.17') {
+        exclude group: 'androidx.test'
+        exclude group: 'androidx.test.espresso'
+    }
+    testImplementation 'junit:junit:4.13.2'
+    // -PlocalJars=DIR: the two android-all jars from DIR instead of Maven (offline, or rate-limited)
+    def local = project.findProperty('localJars')
+    testImplementation local ? files("$local/android-all-${androidAll}.jar") : "org.robolectric:android-all:$androidAll"
+    roboJars local ? files("$local/android-all-instrumented-${androidAll}-i7.jar") : "org.robolectric:android-all-instrumented:$androidAll-i7@jar"
+}
+
+def roboDir = layout.buildDirectory.dir('robolectric-jars')
+def copyRoboJars = tasks.register('copyRoboJars', Copy) {
+    from configurations.roboJars
+    into roboDir
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-nowarn', '-Xlint:none']
+}
+
+test {
+    dependsOn copyRoboJars
+    outputs.upToDateWhen { false }
+    maxHeapSize = '4g'
+    jvmArgs '--add-exports=java.base/jdk.internal.access=ALL-UNNAMED',
+            '--add-opens=java.base/jdk.internal.access=ALL-UNNAMED',
+            '--add-opens=java.base/java.io=ALL-UNNAMED'
+    systemProperty 'robolectric.offline', 'true'
+    systemProperty 'robolectric.dependency.dir', roboDir.get().asFile.path
+    systemProperty 'shots.out', project.findProperty('shotsOut') ?: "$projectDir/build/shots"
+    systemProperty 'shots.web', project.findProperty('shotsWeb') ?: "$projectDir/build/web"
+    systemProperty 'shots.promo', project.findProperty('shotsPromo') ?: ''
+    systemProperty 'shots.port', project.findProperty('shotsPort') ?: '8097'
+    testLogging { events 'failed'; exceptionFormat 'full'; showStandardStreams = true }
+}
