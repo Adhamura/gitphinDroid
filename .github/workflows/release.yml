@@ -1,12 +1,24 @@
 name: Release
 
+# Publishes the GitHub Release v<version> automatically:
+#   gitphinDroid-<version>.apk      the app, signed with the release key
+#   gitphin-usb-<version>.tar.gz    the optional PC helper for the USB cable (Linux)
+#   SHA256SUMS
+# Every push to main whose versionName in version.properties has no tag yet is built and
+# published (it creates the tag). To release: raise versionName, add a "## <version>" section to
+# CHANGELOG.md, merge. Pushing a tag v<version> (it must match) or "Run workflow" also work.
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   check:
@@ -24,7 +36,10 @@ jobs:
           v=$(sed -n 's/^versionName=//p' version.properties | tr -d '[:space:]')
           [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad versionName in version.properties"; exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          if git ls-remote --exit-code --tags origin "refs/tags/v$v" > /dev/null 2>&1; then
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "::error::Tag $GITHUB_REF_NAME != versionName $v"; exit 1; }
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          elif git ls-remote --exit-code --tags origin "refs/tags/v$v" > /dev/null 2>&1; then
             echo "Tag v$v exists already: nothing to release."
             echo "new=false" >> "$GITHUB_OUTPUT"
           else
@@ -59,6 +74,25 @@ jobs:
           if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
             echo "::error::CHANGELOG.md has no section '## $VERSION'"; exit 1
           fi
+          cat >> "$RUNNER_TEMP/notes.md" <<NOTES
+
+          ### Install
+
+          **Phone (Android 7.0+):** download **gitphinDroid-$VERSION.apk**, open it and allow installs
+          from this source. It installs over an older Gitphin Droid (same signing key). Then open
+          Gitphin and follow the guide.
+
+          **PC:** nothing but \`git\` and a browser over USB tethering or Wi-Fi. For the plain USB
+          cable on Linux (USB debugging on, \`adb\` installed):
+          \`\`\`bash
+          tar xzf gitphin-usb-$VERSION.tar.gz && cd gitphin-usb-$VERSION
+          ./install.sh        # systemd user service, no sudo
+          \`\`\`
+          Then plug in the phone and open http://127.0.0.1:8080.
+
+          Check downloads with \`sha256sum -c SHA256SUMS --ignore-missing\`.
+          NOTES
+          cat "$RUNNER_TEMP/notes.md"
 
       - uses: actions/setup-java@v4
         with:

@@ -1,0 +1,10 @@
+*.sh text eol=lf
+*.py text eol=lf
+*.cjs text eol=lf
+pc/gitphin-usb text eol=lf
+android/gradlew text eol=lf
+*.png binary
+*.gif binary
+*.mp4 binary
+*.gz binary
+*.jar binary
