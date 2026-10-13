@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="gitphin_orange">#FF8200</color>
+    <color name="bar_bg">#14110D</color>
+    <color name="bar_fg">#FFD9A8</color>
+    <color name="page_bg">#FFFFFF</color>
+    <color name="px_chrome">#14110D</color>
+    <color name="px_card">#FFF4E0</color>
+    <color name="px_card2">#F5E3C2</color>
+    <color name="px_fg">#14110D</color>
+    <color name="px_muted">#6A5841</color>
+    <color name="px_on_chrome">#FF8200</color>
+    <color name="px_on_chrome2">#FFD9A8</color>
+    <color name="px_bd">#14110D</color>
+    <color name="px_shadow">#14110D</color>
+    <color name="px_page">#FF8200</color>
+    <color name="px_code">#FFFAF0</color>
+    <color name="px_focus">#14110D</color>
+    <color name="px_prim_bg">#14110D</color>
+    <color name="px_prim_fg">#FF8200</color>
+    <color name="px_bad">#C0261C</color>
+    <color name="px_ok">#1F7A3D</color>
+</resources>

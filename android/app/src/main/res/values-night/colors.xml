@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bar_bg">#000000</color>
+    <color name="bar_fg">#FFC780</color>
+    <color name="page_bg">#121212</color>
+    <color name="px_chrome">#000000</color>
+    <color name="px_card">#16120D</color>
+    <color name="px_card2">#211A12</color>
+    <color name="px_fg">#FFE9C7</color>
+    <color name="px_muted">#AD956F</color>
+    <color name="px_on_chrome">#FF8200</color>
+    <color name="px_on_chrome2">#FFC780</color>
+    <color name="px_bd">#FF8200</color>
+    <color name="px_shadow">#5C2F00</color>
+    <color name="px_page">#0C0A07</color>
+    <color name="px_code">#100D09</color>
+    <color name="px_focus">#FF8200</color>
+    <color name="px_prim_bg">#FF8200</color>
+    <color name="px_prim_fg">#0C0A07</color>
+    <color name="px_bad">#FF6A5C</color>
+    <color name="px_ok">#4CC27B</color>
+</resources>

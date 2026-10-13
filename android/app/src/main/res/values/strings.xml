@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Gitphin</string>
+    <string name="settings">Settings</string>
+    <string name="notif_channel">Server</string>
+    <string name="notif_title">Gitphin is running</string>
+    <string name="notif_open">Open</string>
+    <string name="notif_stop">Stop</string>
+    <string name="share_label">Save to Gitphin repo</string>
+</resources>

@@ -1,0 +1,14 @@
+build/
+android/.gradle/
+android/build/
+android/app/build/
+android/app/.cxx/
+android/local.properties
+*.jks
+keystore.properties
+gitphinDroid-debug.apk
+*.apk
+.idea/
+*.iml
+/tmp
+__pycache__/

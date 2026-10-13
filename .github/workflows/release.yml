@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    name: Is this version new?
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      new: ${{ steps.ver.outputs.new }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          v=$(sed -n 's/^versionName=//p' version.properties | tr -d '[:space:]')
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad versionName in version.properties"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$v" > /dev/null 2>&1; then
+            echo "Tag v$v exists already: nothing to release."
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  tests:
+    name: Tests
+    needs: check
+    if: needs.check.outputs.new == 'true'
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Build and publish
+    needs: [check, tests]
+    if: needs.check.outputs.new == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Release notes from CHANGELOG.md
+        shell: bash
+        run: |
+          set -euo pipefail
+          awk -v v="$VERSION" '
+            $0 == "## " v { on = 1; next }
+            /^## / { on = 0 }
+            on { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+            echo "::error::CHANGELOG.md has no section '## $VERSION'"; exit 1
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install NDK and CMake
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;30.0.16248370" "cmake;3.31.6"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Decode the keystore
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for n in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            [ -n "${!n}" ] || { echo "::error::secret $n is not set"; exit 1; }
+          done
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "GITPHIN_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: assembleRelease
+        working-directory: android
+        env:
+          GITPHIN_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          GITPHIN_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          GITPHIN_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Check the signature and pack the files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f "$RUNNER_TEMP/release.jks"
+          apk="android/app/build/outputs/apk/release/gitphinDroid-$VERSION.apk"
+          [ -f "$apk" ] || { echo "::error::$apk not found (unsigned build?)"; ls android/app/build/outputs/apk/release; exit 1; }
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$apksigner" verify "$apk"
+          mkdir -p dist "gitphin-usb-$VERSION"
+          cp "$apk" dist/
+          cp pc/gitphin-usb pc/collector.py pc/install.sh pc/README.md "gitphin-usb-$VERSION/"
+          tar czf "dist/gitphin-usb-$VERSION.tar.gz" "gitphin-usb-$VERSION"
+          (cd dist && sha256sum "gitphinDroid-$VERSION.apk" "gitphin-usb-$VERSION.tar.gz" > SHA256SUMS)
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: Gitphin Droid ${{ needs.check.outputs.version }}
+          body_path: ${{ runner.temp }}/notes.md
+          files: |
+            dist/gitphinDroid-${{ needs.check.outputs.version }}.apk
+            dist/gitphin-usb-${{ needs.check.outputs.version }}.tar.gz
+            dist/SHA256SUMS

@@ -1,0 +1,124 @@
+plugins {
+    id 'com.android.application'
+}
+
+// One source of truth for the version: ../version.properties (versionName=MAJOR.MINOR.PATCH).
+def versionProps = new Properties()
+file('../../version.properties').withInputStream { versionProps.load(it) }
+def appVersionName = versionProps.getProperty('versionName').trim()
+def versionParts = appVersionName.tokenize('.')
+if (versionParts.size() != 3 || !versionParts.every { it ==~ /\d+/ && it.toInteger() < 100 }) {
+    throw new GradleException("version.properties: versionName must be MAJOR.MINOR.PATCH, got '${appVersionName}'")
+}
+def appVersionCode = versionParts[0].toInteger() * 10000 + versionParts[1].toInteger() * 100 + versionParts[2].toInteger()
+
+// Release signing: env vars (CI), else -PgitphinKeystoreProps=<keystore.properties> (local), else unsigned.
+def keystore = [:]
+if (System.getenv('GITPHIN_KEYSTORE_FILE')) {
+    keystore = [
+        storeFile    : System.getenv('GITPHIN_KEYSTORE_FILE'),
+        storePassword: System.getenv('GITPHIN_KEYSTORE_PASSWORD'),
+        keyAlias     : System.getenv('GITPHIN_KEY_ALIAS'),
+        keyPassword  : System.getenv('GITPHIN_KEY_PASSWORD'),
+    ]
+} else if (project.hasProperty('gitphinKeystoreProps')) {
+    def kp = new Properties()
+    file(project.property('gitphinKeystoreProps')).withInputStream { kp.load(it) }
+    keystore = [
+        storeFile    : kp.getProperty('storeFile'),
+        storePassword: kp.getProperty('storePassword'),
+        keyAlias     : kp.getProperty('keyAlias'),
+        keyPassword  : kp.getProperty('keyPassword'),
+    ]
+}
+def canSign = keystore.storeFile && keystore.storePassword && keystore.keyAlias && keystore.keyPassword
+
+android {
+    namespace 'io.github.adhamura.gitphindroid'
+    compileSdk 36
+    ndkVersion '30.0.16248370'
+
+    defaultConfig {
+        applicationId 'io.github.adhamura.gitphindroid'
+        minSdk 24
+        targetSdk 36
+        versionCode appVersionCode
+        versionName appVersionName
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DGITPHIN_ANDROID=ON'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path '../../CMakeLists.txt'
+            version '3.31.6'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging false
+        }
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs = [layout.buildDirectory.dir('generated/webui')]
+        }
+    }
+
+    signingConfigs {
+        if (canSign) {
+            release {
+                storeFile file(keystore.storeFile)
+                storePassword keystore.storePassword
+                keyAlias keystore.keyAlias
+                keyPassword keystore.keyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (canSign) {
+                signingConfig signingConfigs.release
+            } else {
+                gradle.taskGraph.whenReady { graph ->
+                    if (graph.allTasks.any { it.name.toLowerCase().contains('assemblerelease') }) {
+                        logger.warn('WARNING: no release keystore (set GITPHIN_KEYSTORE_FILE/_PASSWORD, GITPHIN_KEY_ALIAS, ' +
+                                'GITPHIN_KEY_PASSWORD or -PgitphinKeystoreProps=<file>): the release APK is UNSIGNED.')
+                    }
+                }
+            }
+        }
+    }
+
+    applicationVariants.configureEach { variant ->
+        variant.outputs.configureEach {
+            outputFileName = "gitphinDroid-${appVersionName}${variant.buildType.name == 'release' ? '' : '-' + variant.buildType.name}${canSign || variant.buildType.name != 'release' ? '' : '-unsigned'}.apk"
+        }
+    }
+}
+
+// The web UI from core/files. AGP strips ".gz" from asset names, so index.html.gz would clash
+// with index.html: it ships as webui/index.html.gzip and GitphinService copies it back.
+def webUi = tasks.register('copyWebUi', Copy) {
+    from('../../core/files') {
+        include 'index.html', 'index.html.gz'
+        rename 'index.html.gz', 'index.html.gzip'
+    }
+    into layout.buildDirectory.dir('generated/webui/webui')
+}
+tasks.named('preBuild') { dependsOn webUi }

@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  file-size:
+    name: File size limit (500 lines)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check that no source file has more than 500 lines
+        run: |
+          bad=0
+          while IFS= read -r -d '' f; do
+            n=$(wc -l < "$f")
+            if [ "$n" -gt 500 ]; then echo "::error file=$f::$f has $n lines (limit 500)"; bad=1; fi
+          done < <(find port android/app/src/main/java pc tests -type f \
+            ! -name '*.png' ! -name '*.pyc' ! -path '*/__pycache__/*' -print0)
+          exit $bad
+        shell: bash
+
+  android:
+    name: Android debug build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install NDK and CMake
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;30.0.16248370" "cmake;3.31.6"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+      - name: assembleDebug
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+  host-tests:
+    name: Host tests (git, ASan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake gcc zlib1g-dev python3 git curl nodejs unzip
+      - name: Run the tests
+        run: |
+          set -u
+          failed=0
+          for t in host smart zip webhook avatar web; do
+            echo "::group::run_${t}_test.sh"
+            TIMING=0 bash "tests/run_${t}_test.sh" || { echo "::error::run_${t}_test.sh failed"; failed=1; }
+            echo "::endgroup::"
+          done
+          exit $failed

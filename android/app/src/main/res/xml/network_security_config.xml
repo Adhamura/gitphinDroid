@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Webhook URLs can be http:// addresses on the LAN, so cleartext is allowed for any host. -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

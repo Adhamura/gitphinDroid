@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notif_copy">Copy URL</string>
+    <string name="notif_qr">QR</string>
+    <string name="tile_label">Gitphin</string>
+</resources>

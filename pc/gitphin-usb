@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""gitphin-usb: Gitphin Droid on the PC over a USB cable, like the Flipper bridge.
+
+When a phone with the app is plugged in (USB debugging on), it:
+  1. links a hidden local port to the app on the phone (adb forward),
+  2. serves http://127.0.0.1:8080 (or the next free port) and passes requests to the phone,
+  3. answers /pc/hub, /pc/info and /pc/wifi itself (Collector tab: this PC, with collector.py, and the link
+     state for the page's status dot), as the Flipper bridge does; other /pc/ routes
+     (/pc/zip: Download ZIP) go to the phone.
+It closes the port when the phone is unplugged, so the Flipper bridge can use 8080 again.
+
+Usage: gitphin-usb        (pc/install.sh runs it as a systemd user service)
+Env: GITPHIN_PORT (default 8080), GITPHIN_PHONE_PORT (port in the app, default 8080), ADB.
+"""
+
+import json
+import os
+import shutil
+import socket
+import socketserver
+import subprocess
+import sys
+import threading
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import collector  # noqa: E402  (same file as in Gitphin's pc/)
+
+PKG = "io.github.adhamura.gitphindroid"
+ADB = os.environ.get("ADB") or shutil.which("adb") or "/opt/android-sdk/platform-tools/adb"
+PORT = int(os.environ.get("GITPHIN_PORT", "8080"))
+PHONE_PORT = int(os.environ.get("GITPHIN_PHONE_PORT", "8080"))
+HEAD_MAX = 64 * 1024
+STUCK_S = 180.0
+
+
+def log(msg):
+    print("gitphin-usb: " + msg, flush=True)
+
+
+def note(msg):
+    log(msg)
+    if shutil.which("notify-send"):
+        subprocess.run(["notify-send", "-a", "Gitphin", "-i", "network-server", "Gitphin (phone)", msg],
+                       check=False, capture_output=True)
+
+
+def adb(*args, timeout=20):
+    try:
+        r = subprocess.run([ADB, *args], capture_output=True, text=True, timeout=timeout, check=False)
+        return r.returncode, r.stdout
+    except (OSError, subprocess.SubprocessError):
+        return 1, ""
+
+
+def free_port(start, count=10):
+    for p in range(start, start + count):
+        with socket.socket() as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # like the server: TIME_WAIT is free
+            try:
+                s.bind(("127.0.0.1", p))
+                return p
+            except OSError:
+                continue
+    return None
+
+
+class Link:
+    """The phone side: hidden local port of the adb forward, and in-flight requests."""
+
+    def __init__(self):
+        self.upstream = None
+        self.lock = threading.Lock()
+        self.inflight = {}
+
+    def busy_s(self):
+        with self.lock:
+            if not self.inflight:
+                return None
+            return round(time.monotonic() - min(self.inflight.values()), 1)
+
+
+LINK = Link()
+
+
+def alive(port):
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=3) as s:
+            s.sendall(b"GET /pc/hub HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            return s.recv(12).startswith(b"HTTP/1.1 200")
+    except OSError:
+        return False
+
+
+class Handler(socketserver.BaseRequestHandler):
+    def handle(self):
+        sock = self.request
+        buf = b""
+        try:
+            while b"\r\n\r\n" not in buf:
+                data = sock.recv(8192)
+                if not data or len(buf) > HEAD_MAX:
+                    return
+                buf += data
+        except OSError:
+            return
+        line = buf.split(b"\r\n", 1)[0].decode("latin-1", "replace").split(" ")
+        path = line[1] if len(line) > 1 else "/"
+        if path.split("?", 1)[0] in ("/pc/hub", "/pc/info", "/pc/wifi"):  # other /pc/ paths (/pc/zip) go to the phone
+            self.serve_pc(sock, path.split("?", 1)[0])
+            return
+        self.forward(sock, buf)
+
+    @staticmethod
+    def send(sock, code, body, ctype="application/json"):
+        reason = {200: "OK", 404: "Not Found", 503: "Service Unavailable"}.get(code, "OK")
+        sock.sendall(b"HTTP/1.1 %d %s\r\nContent-Type: %s\r\nCache-Control: no-store\r\n"
+                     b"Content-Length: %d\r\nConnection: close\r\n\r\n"
+                     % (code, reason.encode(), ctype.encode(), len(body)) + body)
+
+    def serve_pc(self, sock, route):
+        if route == "/pc/hub":
+            body = json.dumps({"connected": LINK.upstream is not None, "busy_s": LINK.busy_s(),
+                               "stuck_after_s": STUCK_S}).encode()
+        else:
+            kind = {"/pc/info": "info", "/pc/wifi": "wifi"}.get(route)
+            body = collector.as_json(kind) if kind else None
+        if body is None:
+            self.send(sock, 404, b"")
+        else:
+            self.send(sock, 200, body)
+
+    def forward(self, sock, first):
+        port = LINK.upstream
+        try:
+            up = socket.create_connection(("127.0.0.1", port), timeout=10) if port else None
+        except OSError:
+            up = None
+        if up is None:
+            self.send(sock, 503, b"<h1>Gitphin</h1><p>The phone is not connected, or the app does not answer.</p>",
+                      "text/html; charset=utf-8")
+            return
+        key = object()
+        with LINK.lock:
+            LINK.inflight[key] = time.monotonic()
+        try:
+            up.settimeout(None)
+            # mark the link, so the phone can show "USB" (the header counts only on loopback)
+            line, _, rest = first.partition(b"\r\n")
+            up.sendall(line + b"\r\nX-Gitphin-Via: usb\r\n" + rest)
+
+            def pump_up():  # rest of the request body
+                try:
+                    while True:
+                        d = sock.recv(65536)
+                        if not d:
+                            break
+                        up.sendall(d)
+                except OSError:
+                    pass
+                try:
+                    up.shutdown(socket.SHUT_WR)
+                except OSError:
+                    pass
+
+            threading.Thread(target=pump_up, daemon=True).start()
+            while True:
+                d = up.recv(65536)
+                if not d:
+                    break
+                sock.sendall(d)
+        except OSError:
+            pass
+        finally:
+            with LINK.lock:
+                LINK.inflight.pop(key, None)
+            up.close()
+
+
+class Server(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+def phone_serial():
+    """The first USB phone in 'device' state that has the app."""
+    _, out = adb("devices")
+    for line in out.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == "device":
+            rc, path = adb("-s", parts[0], "shell", "pm", "path", PKG)
+            if rc == 0 and "package:" in path:
+                return parts[0]
+    return None
+
+
+def drop_old_forwards(serial):
+    """Forwards that an earlier run left (hidden ports 18080-18179 to the app)."""
+    _, out = adb("-s", serial, "forward", "--list")
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[2] == "tcp:%d" % PHONE_PORT and parts[1].startswith("tcp:"):
+            if 18080 <= int(parts[1][4:] or 0) < 18180:
+                adb("-s", serial, "forward", "--remove", parts[1])
+
+
+def session(serial):
+    drop_old_forwards(serial)
+    hidden = free_port(18080, 100)
+    lp = free_port(PORT)
+    if hidden is None or lp is None:
+        note("No free port near %d" % PORT)
+        time.sleep(10)
+        return
+    if adb("-s", serial, "forward", "tcp:%d" % hidden, "tcp:%d" % PHONE_PORT)[0] != 0:
+        time.sleep(3)
+        return
+    if not alive(hidden):  # the server is not running: start the app
+        adb("-s", serial, "shell", "am", "start", "-n", PKG + "/.MainActivity")
+        for _ in range(20):
+            if alive(hidden):
+                break
+            time.sleep(0.5)
+    LINK.upstream = hidden
+    srv = Server(("127.0.0.1", lp), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    if alive(hidden):
+        note("Connected: http://127.0.0.1:%d" % lp)
+    else:
+        note("Phone found, but Gitphin does not answer on port %d" % PHONE_PORT)
+    # block until unplug (adb exits when the device goes away)
+    adb("-s", serial, "wait-for-usb-disconnect", timeout=None)
+    LINK.upstream = None
+    srv.shutdown()
+    srv.server_close()
+    adb("forward", "--remove", "tcp:%d" % hidden)
+    log("phone unplugged")
+
+
+def main():
+    if not os.path.exists(ADB):
+        log("adb not found (set ADB=...)")
+        return 1
+    while True:
+        adb("wait-for-usb-device", timeout=None)
+        serial = phone_serial()
+        if not serial:
+            log("phone without the Gitphin app: waiting for unplug")
+            adb("wait-for-usb-disconnect", timeout=None)
+            continue
+        session(serial)
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)
