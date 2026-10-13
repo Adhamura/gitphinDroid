@@ -1,9 +1,10 @@
 // Screenshots of the web UI for the README. Run by capture.sh.
-// Usage: node capture.cjs <base url> <out dir>
+// Usage: node capture.cjs <base url> <out dir> [name=hash ...]
+//        (with name=hash arguments: only those, in the phone viewport)
 const { chromium } = require("playwright-core");
 const fs = require("fs");
 
-const [base, out] = process.argv.slice(2);
+const [base, out, ...only] = process.argv.slice(2);
 const exe = process.env.CHROMIUM ||
     ["/opt/pw-browsers/chromium-1194/chrome-linux/chrome", "/opt/pw-browsers/chromium"].find(p => fs.existsSync(p));
 
@@ -48,6 +49,11 @@ async function shoot(browser, list, opts) {
 
 (async () => {
     const browser = await chromium.launch({ executablePath: exe });
+    const phoneOpts = { viewport: { width: 412, height: 760 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true };
+    if (only.length) {
+        await shoot(browser, only.map(a => [a.split("=")[0], a.slice(a.indexOf("=") + 1), null, "light"]), phoneOpts);
+        return browser.close();
+    }
     await shoot(browser, desktop, { viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
     await shoot(browser, phone, { viewport: { width: 412, height: 760 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
     await browser.close();

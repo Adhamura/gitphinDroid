@@ -51,6 +51,7 @@ test {
     systemProperty 'robolectric.dependency.dir', roboDir.get().asFile.path
     systemProperty 'shots.out', project.findProperty('shotsOut') ?: "$projectDir/build/shots"
     systemProperty 'shots.web', project.findProperty('shotsWeb') ?: "$projectDir/build/web"
+    systemProperty 'shots.promo', project.findProperty('shotsPromo') ?: ''
     systemProperty 'shots.port', project.findProperty('shotsPort') ?: '8097'
     testLogging { events 'failed'; exceptionFormat 'full'; showStandardStreams = true }
 }

@@ -60,6 +60,12 @@ phone itself, reached from the PC over the cable or the local network.
   analytics, MIT licensed. Nothing goes to the internet except the optional update check and
   the webhooks you set.
 
+## See it work
+
+<p align="center"><img src="docs/promo/gitphin-droid.gif" width="720" alt="git push over the USB cable, then browsing the repo in the browser"><br>
+<sub>A real <code>git push</code> to the server, the app's main screen during the push, then the
+web UI. Full video: <a href="docs/promo/gitphin-droid.mp4">gitphin-droid.mp4</a> (48 s).</sub></p>
+
 ## Screenshots
 
 ### On the phone
@@ -396,6 +402,7 @@ Screenshots: `tools/screenshots/capture.sh` makes every picture in `docs/screens
 a phone. It runs `gitphind` with demo repos, captures the web UI with Chromium, and draws the
 app's screens with Robolectric (JDK 17+, `aapt2` and an `android.jar` from `$ANDROID_HOME`, or
 `apt install aapt android-sdk-platform-23`). `WEB_ONLY=1` skips the app's screens.
+`tools/promo/make_promo.sh` then makes the video and the GIF in `docs/promo/` (needs ffmpeg).
 
 To update the C core from Gitphin: `./sync_core.sh ../gitphin`. Source files stay under 500
 lines (CI checks it).

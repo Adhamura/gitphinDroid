@@ -110,8 +110,10 @@ public class AppScreens {
         return b;
     }
 
+    static String outDir;   // null: shots.out
+
     static void save(Bitmap b, String name) throws Exception {
-        File f = new File(System.getProperty("shots.out"), name + ".png");
+        File f = new File(outDir != null ? outDir : System.getProperty("shots.out"), name + ".png");
         f.getParentFile().mkdirs();
         try (FileOutputStream o = new FileOutputStream(f)) { b.compress(Bitmap.CompressFormat.PNG, 100, o); }
         System.out.println("wrote " + f);
@@ -284,6 +286,34 @@ public class AppScreens {
         for (int k = 0; k < 100 && form.getVisibility() != View.VISIBLE; k++) { Thread.sleep(100); idle(); }   // the repo list comes from the server
         idle();
         save(a, "share");
+    }
+
+    /** Frames for the promo video (tools/promo): idle, a push over the USB cable, idle again.
+     *  Only with -Dshots.promo=<dir>; the web UI shots promo-before/promo-after come from make_promo.sh. */
+    @Test public void promo() throws Exception {
+        String dir = System.getProperty("shots.promo", "");
+        org.junit.Assume.assumeFalse(dir.isEmpty());
+        outDir = dir;
+        try {
+            promoFrames();
+        } finally {
+            outDir = null;
+        }
+    }
+
+    void promoFrames() throws Exception {
+        Prefs.setBarExpanded(ctx, false);
+        save(main("promo-before"), "p-before");
+        int[] pct = {4, 15, 29, 43, 58, 71, 86, 100};
+        for (int i = 0; i < pct.length; i++) {
+            int objs = 36 * pct[i] / 100;   // the real push of make_promo.sh: 36 objects, 3.5 KiB
+            ShadowNativeServer.status = status("usb", "{\"show\":true,\"live\":" + (pct[i] < 100) + ",\"state\":\""
+                    + (pct[i] < 100 ? "Pushing" : "Done") + "\",\"pct\":" + pct[i] + ",\"sub\":-1,\"line\":\""
+                    + objs + " obj, " + (35 * pct[i] / 1000) + " KB\",\"rate\":\"\"}");
+            save(main("promo-before"), "p-push-" + i);
+        }
+        ShadowNativeServer.status = status("usb", "{\"show\":false,\"state\":\"\"}");
+        save(main("promo-after"), "p-after");
     }
 
     @Test public void widget() throws Exception {
